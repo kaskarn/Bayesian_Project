@@ -1,0 +1,70 @@
+\documentclass{article}
+\usepackage{multicol}
+\usepackage[margin=1.5in]{geometry}
+\usepackage[parfill]{parskip}
+
+\begin{document}
+\begin{titlepage}
+	\centering
+	{\scshape\LARGE University of North Carolina at Chapel Hill \par}
+	\vspace{1cm}
+	{\scshape\Large Bayesian Statistics, Project I\par}
+	\vspace{1.5cm}
+	{\huge\bfseries Comparative evaluation of coronary artery bypass grafting providers in the state of New York \par}
+	\vspace{2cm}
+	{\Large\itshape Antoine Baldassari\par}
+	\vfill
+% Bottom of the page
+	{\large \today\par}
+\end{titlepage}
+\section{Background}
+{Coronary heart disease(CHD) is an inflammatory condition where plaque buildup progressively occludes a coronary artery, which circulates oxygenated blood to the heart. Nearly two thirds of all death due to heart disease stem from complications of CHD. \par}
+{CHD occurs along a spectrum of severity, and asymptomatic early-stage patients can successfully manage CHD progression, primarily through lifestyle modification and statin use; however, surgical treatment is often required to manage cardiovascular risks stemming from CHD among late-stage patients. One such treatment, coronary artery bypass grafting (CABG), involves grafting a healthy artery from the chest wall to connect sections of the coronary artery separated by atherosclerotic plaque. CABG rapidly relieves CHD symptoms and lastingly lowers the risk of severe clinical events due to CHD. Like all open-heart surgeries, CABH comprises risks to the patient, with the in-hospital mortality rate estimated at 2\% in 2010. \par} 
+{The 2009 Affordable Care and Patient Protection Act (ACA) mandates the monitoring of treatment delivery and effectiveness among hospitals treating patients on state (Medicaid) or Federal (Medicare) insure plans. As a consequence, healthcare providers have publicly published their performance metrics for surgical procedures including CABG, including 30-day mortality rates following the intervention. \par}
+{30-day mortality following CABG is undoubtedly affected by the quality of hospital care, but require heavy adjustment before allowing meaningful comparison between providers: for instance, hospitals serving sick patients with the worst outlook would be unfairly penalized by the use of crude 30-day mortality metrics. The American Heart Association (AHA) 2006 scientific statement \textit{tandards for Statistical Models Used for Public Reporting of Health Outcomes} guides the statistical adjustment of CABG mortality in comparative effectiveness research. Following the AHA's guidelines, observed mortality rates are contrasted with expected mortality rates accounting for demographics (age and sex), and for comorbidity risk-adjustment variables obtained for the 12 months preceding the operation: \par}
+\begin{multicols}{2}
+\begin{itemize}
+  \setlength\itemsep{-0.5em}
+  \item History of Prior CABG or valve surgery
+  \item Cardiogenic shock
+  \item Cancer
+  \item Protein-calorie malnutrition
+  \item Liver and biliary disease
+  \item Other gastrointestinal disorders
+  \item Dementia or other specified brain disorders
+  \item Hemiplegia, paraplegia, paralysis, functional disability
+  \item Congestive heart failure
+  \item Acute myocardial infarction
+  \item Angina pectoris/old myocardial infarction
+  \item Coronary atherosclerosis
+  \item Other acute/subacute forms for ischemic heart disease
+  \item Hypertension
+  \item Stroke
+  \item Vascular or circulatory disease
+  \item Chronic obstructive pulmonary disease
+  \item Pneumonia
+  \item Dialysis status
+  \item Other endocrine, metabolic/nutritional disorders
+  \item Renal failure
+  \item Decubitus ulcer or chronic skin ulcer
+\end{itemize}
+\end{multicols}
+
+\newpage \section{Objective and data description}
+{We are interested in evaluating the performance of hospitals and physicians performing CABG in the state of New York between 2008 and 2011, using mortality within 30 days of the procedure as our measure of quality. Our results may be used by regulators to identify over- and under- performing institutions, and by the hospitals themselves to evaluate the performance of individual clinicians.\par}
+{Data for these analyses are publicly available through the Centers for Medicare and Medicaid Services (CMS); we consider the following variables\par}
+\section{Preliminary analyses}
+\section{Analysis strategy}
+\section{Implementation}
+\section{Results}
+\section{Conclusions}
+\section{Appendix}
+<<'chunk1', echo=TRUE, results='hide'>>=
+1 + 1
+@
+
+<<'chunk1', echo=FALSE, results='markup'>>=
+@
+
+
+\end{document}
