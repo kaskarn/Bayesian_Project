@@ -12,14 +12,18 @@ docs$pdeath <- docs$Observed.Mortality.Rate/100
 docs <- docs %>% group_by(Detailed.Region, Procedure) %>% mutate(r.cases = sum(Number.of.Cases), r.death = sum(Number.of.Deaths))
 docs <- docs %>% group_by(Hospital.Name, Procedure) %>% mutate(h.cases = sum(Number.of.Cases), h.death = sum(Number.of.Deaths))
 
+docs <- docs %>% filter(Procedure == "CABG")
+docs$Physician.Name <- factor(as.character(docs$Physician.Name), labels = unique(docs$Physician.Name))
+docs$Hospital.Name <- factor(as.character(docs$Hospital.Name), labels = unique(docs$Hospital.Name))
+
 docs$r.pdeath <- with(docs, r.death/r.cases)
 docs$r.ldeath <- with(docs, r.pdeath/(1+r.pdeath))
 docs$h.pdeath <- with(docs, h.death/h.cases)
 docs$h.ldeath <- with(docs, h.pdeath/(1+h.pdeath))
 
-docs %>% group_by(Hospital.Name) %>% summarise(n = length(unique(Detailed.Region))) %$% table(n)
-doc_hosps <- docs %>% group_by(Physician.Name) %>% summarise(n = length(unique(Hospital.Name))) %$% n
-docs %>% group_by(Physician.Name) %>% mutate(n = length(unique(Detailed.Region))) %$% table(n)
+#docs %>% group_by(Hospital.Name) %>% summarise(n = length(unique(Detailed.Region))) %$% table(n)
+#doc_hosps <- docs %>% group_by(Physician.Name) %>% summarise(n = length(unique(Hospital.Name))) %$% n
+#docs %>% group_by(Physician.Name) %>% mutate(n = length(unique(Detailed.Region))) %$% table(n)
 
 hosps <- docs[,c("Detailed.Region", "Hospital.Name")] %>% distinct()
 
@@ -27,17 +31,8 @@ R <- length(unique(docs$Detailed.Region))
 H <- length(unique(docs$Hospital.Name))
 D <- length(unique(docs$Physician.Name))
 
-hos.N <- doc.N <- list()
-
-tm1 <- docs %>% group_by(Detailed.Region) %>% summarise(tlen = length(unique(Hospital.Name))) %$% tlen
-tm2 <- docs %>% filter(Procedure == "CABG") %>% group_by(Detailed.Region) %>% summarise(tlen = length(unique(Hospital.Name))) %$% tlen
-tm3 <- docs %>% filter(Procedure != "CABG") %>% group_by(Detailed.Region) %>% summarise(tlen = length(unique(Hospital.Name))) %$% tlen
-hos.N <- list(all=tm1, cabg=tm2, valve=tm3)
-
-tm1 <- docs %>% group_by(Hospital.Name) %>% summarise(tlen = length(unique(Physician.Name))) %$% tlen
-tm2 <- docs %>% filter(Procedure == "CABG") %>% group_by(Hospital.Name) %>% summarise(tlen = length(unique(Physician.Name))) %$% tlen
-tm3 <- docs %>% filter(Procedure != "CABG") %>% group_by(Hospital.Name) %>% summarise(tlen = length(unique(Physician.Name))) %$% tlen
-doc.N <- list(all=tm1, cabg=tm2, valve=tm3)
+hos.N <-  docs %>% group_by(Detailed.Region) %>% summarise(tlen = length(unique(Hospital.Name))) %$% tlen
+doc.N <- docs %>% group_by(Hospital.Name) %>% summarise(tlen = length(unique(Physician.Name))) %$% tlen
 
 #where_Hosp times a beta vector returns sum of betas by region
 where_hosp <- matrix(nrow = R, ncol = H)
@@ -45,41 +40,29 @@ colnames(where_hosp) <- unique(docs$Hospital.Name)
 rownames(where_hosp) <- unique(docs$Detailed.Region)
 for(i in as.numeric(unique(hosps$Detailed.Region))) where_hosp[i,] <- (as.numeric(hosps$Detailed.Region) == i)
 
-tm1 <- matrix(FALSE, nrow = H, ncol = D)
-colnames(tm1) <- unique(docs$Physician.Name)
-rownames(tm1) <- unique(docs$Hospital.Name)
-tm2 <- tm3 <- tm1
+where_docs <- matrix(FALSE, nrow = H, ncol = D)
+colnames(where_docs) <- unique(docs$Physician.Name)
+rownames(where_docs) <- unique(docs$Hospital.Name)
 for(i in as.numeric(unique(docs$Physician.Name))) {
   temp <- as.numeric(unique( docs[ as.numeric(docs$Physician.Name) == i, ]$Hospital.Name )) 
-  tm1[temp, i] = TRUE
-  temp <- as.numeric(unique( docs[ as.numeric(docs$Physician.Name) == i & docs$Procedure == "CABG", ]$Hospital.Name ))
-  tm2[temp, i] = TRUE
-  temp <- as.numeric(unique( docs[ as.numeric(docs$Physician.Name) == i & docs$Procedure != "CABG", ]$Hospital.Name ))
-  tm3[temp, i] = TRUE
+  where_docs[temp, i] = TRUE
 }
-where_docs <- list(all=tm1, cabg=tm2, valve=tm3)
+
 
 #Create list containing hospital-level and doctor-level information
-docs_sim <- docs[, c("Physician.Name", "Procedure","Hospital.Name", "Number.of.Cases", "Number.of.Deaths")] %>% group_by(Procedure) %>% mutate(all.deaths = sum(Number.of.Deaths), all.cases = sum(Number.of.Cases))
+tm.dat <- docs[, c("Hospital.Name", "Number.of.Cases", "Number.of.Deaths")] %>% group_by(Hospital.Name) %>% mutate(all.deaths = sum(Number.of.Deaths), all.cases = sum(Number.of.Cases)) 
+tm.dat <- tm.dat[,c(1,4,5)] %>% distinct()
 doc_list <- hos_list <- list()
 for(i in 1:H){
-  li1 <- as.numeric(unique(docs[as.numeric(docs$Hospital.Name) == i,]$Detailed.Region))
-  li2 <- as.numeric(unique(docs[as.numeric(docs$Hospital.Name) == i & docs$Procedure == "CABG",]$Detailed.Region))
-  li3 <- as.numeric(unique(docs[as.numeric(docs$Hospital.Name) == i & docs$Procedure != "CABG",]$Detailed.Region))
-  tm1 <- with(docs_sim[as.numeric(docs_sim$Hospital.Name) == i,], cbind(all.cases, all.deaths))
-  tm2 <- with(docs[as.numeric(docs$Hospital.Name) == i & docs$Procedure == "CABG",], cbind(unique(h.cases), unique(h.death)))
-  tm3 <- with(docs[as.numeric(docs$Hospital.Name) == i & docs$Procedure != "CABG",], cbind(unique(h.cases), unique(h.death)))
-  hos_list[[i]] <- list(all.index = li1, all.dat = tm1, cabg.index = li2, cabg.dat = tm2, valve.index = li3, cabg.dat = tm3)
+  li<- as.numeric(unique(docs[as.numeric(docs$Hospital.Name) == i,]$Detailed.Region))
+  tm <- with(tm.dat[as.numeric(tm.dat$Hospital.Name) == i,], cbind(all.cases, all.deaths))
+  hos_list[[i]] <- list(index = li, dat = tm)
 }
+
 for(i in 1:D){
-  tm1 <- tm2 <- tm3 <- NULL
-  li1 <- as.numeric(unique(docs[as.numeric(docs$Physician.Name) == i,]$Hospital.Name))
-  li2 <- as.numeric(unique(docs[as.numeric(docs$Physician.Name) == i & docs$Procedure == "CABG",]$Hospital.Name))
-  li3 <- as.numeric(unique(docs[as.numeric(docs$Physician.Name) == i & docs$Procedure != "CABG",]$Hospital.Name))
-  tm1 <- with(docs_sim[as.numeric(docs_sim$Physician.Name) == i,], cbind(all.cases, all.deaths))
-  tm2 <- with(docs[as.numeric(docs$Physician.Name) == i & docs$Procedure == "CABG",], cbind(Number.of.Cases, Number.of.Deaths))
-  tm3 <- with(docs[as.numeric(docs$Physician.Name) == i & docs$Procedure != "CABG",], cbind(Number.of.Cases, Number.of.Deaths))
-  doc_list[[i]] <- list(all.index = li1, all.dat = tm1, cabg.index = li2, cabg.dat = tm2, valve.index = li3, cabg.dat = tm3)
+  li <- as.numeric(unique(docs[as.numeric(docs$Physician.Name) == i,]$Hospital.Name))
+  tm <- with(docs[as.numeric(docs$Physician.Name) == i,], cbind(Number.of.Cases, Number.of.Deaths))
+  doc_list[[i]] <- list(index = li, dat = tm)
 }
 
 #PRIORS
@@ -100,87 +83,39 @@ beta.now <- log(h.odeath)
 #Number of iterations and bookkeeping
 I <- 100
 THETA <- SIGMA <- matrix(nrow=I, ncol=R)
+colnames(THETA) <- colnames(SIGMA) <- unique(docs$Detailed.Region)
 BETA <- DELTA <- matrix(nrow=I, ncol=H)
-
-#Gibbs step
-#Update Theta
-b_mean <- (where_hosp%*%beta.now)/hos.N
-V = solve(solve(theta.prior.V) + H*solve(sigma.now))
-E = V %*% t(theta.prior.E%*%solve(theta.prior.V) + t(H*solve(sigma.now)%*%b_mean))
-theta.now <- rmvnorm(1, E, V)
-
-#update sigma
-SS <- matrix(0, nrow=R, ncol=R)
-for(i in 1:H) {
-  tb <- where_hosp[,i]*(beta.now[i]-theta.now)
-  SS <- SS + t(tb)%*%tb
-}
-sigma.now <- riwish(sigma.prior.df + H, solve(sigma.prior.s + SS))
+colnames(BETA) <- colnames(DELTA) <- unique(docs$Hospital.Name)
+for(t in 1:I){
+  #Gibbs step
+  #Update Theta
+  b_mean <- (where_hosp%*%beta.now)/hos.N
+  V = solve(solve(theta.prior.V) + H*solve(sigma.now))
+  E = V %*% t(theta.prior.E%*%solve(theta.prior.V) + t(H*solve(sigma.now)%*%b_mean))
+  theta.now <- rmvnorm(1, E, V)
   
-#Metropolis step
-for(i in i:H){
-  beta.prop <- rmvnorm(1, ((!where_hosp[,1])*theta.now)+(where_hosp[,1]*beta.now[1]), 0.5*sigma.now)
-  tm_p <- exp(beta.prop%*%where_hosp[,1])
-  num <- log(dbinom(100,110,prob=(tm_p/(1+tm_p)))) 
-  p_bet <- dmvnorm(beta.prop, mean=theta.now, sigma=sigma.now)
+  #update sigma
+  SS <- matrix(0, nrow=R, ncol=R)
+  for(i in 1:H) {
+    tb <- where_hosp[,i]*(beta.now[i]-theta.now)
+    SS <- SS + t(tb)%*%tb
+  }
+  sigma.now <- riwish(sigma.prior.df + H, solve(sigma.prior.s + SS))
+  
+  #Metropolis step hospitals
+  for(i in 1:H){
+    ind <- as.numeric(c(hos_list[[i]][1]))
+    V <- sigma.now[ind,ind]
+    beta.prop <- rnorm(1, beta.now[ind], sqrt(V/2))
+    p.beta.prop <- dnorm(beta.prop, theta.now[ind], sqrt(V), log = TRUE)
+    p.beta.now <- dnorm(beta.now[i], theta.now[ind], sqrt(V), log = TRUE)
+    p.dat.prop <- dbinom(hos_list[[i]]$dat[2], hos_list[[i]]$dat[1], prob=exp(beta.prop)/(1+exp(beta.prop)), log=T)
+    p.dat.now <- dbinom(hos_list[[i]]$dat[2], hos_list[[i]]$dat[1], prob=exp(beta.now[i])/(1+exp(beta.now[i])), log=T)
+    r = p.beta.prop + p.dat.prop - p.beta.now - p.dat.now
+    u = log(runif(1))
+    if(r > u) beta.now[i] = beta.prop
+  }
+  BETA[t,] <- beta.now
+  THETA[t,] <- theta.now
+  SIGMA[t,] <- diag(sigma.now)
 }
-
-unlist(beta.prop[1,])
-
-sigma <- matrix(c(4,2,2,3), ncol=2)
-x <- rmvnorm(n=500, mean=c(1,2), sigma=sigma)
-
-S <- rep(0, n.regions)
-for(i in 1:n.hospitals) S <- S + sum(beta.now[i,] - theta.now)%*%t(beta.now[i,] - theta.now)
-
-return(sigma)
-
-
-
-
-
-
-# THINGS WE'LL STORE, AND THEIR STARTING VALUES (PRIOR)
-  #fixed effects and between-region variance
-  THETA <- SIGMA <- matrix(nrow=I, ncol=R)
-  THETA[1,] <- mu.prior.E
-  #fixed region effect + hospital random effects and between-hospital variance
-  BETA <- DELTA <- matrix(nrow=I, ncol=H)
-  BETA[1,] <- rep(mu.prior.E, H)
-  #fixed region effect + hospital random effects + doctor random effects
-  GAMMA  <- matrix(nrow=I, ncol=D)
-  GAMMA[1,] <- rep(mu.prior.E, D)
-
-# OUR KEY FUNCTIONS
-  #Sample Theta from full conditional posterior distribution
-  get_theta <- function(n.hospitals, n.regions, theta.prior.V, sigma.now, theta.prior.E, beta.now){
-    b_mean <- rep(0, n.regions)
-    for(i in 1:n.regions) b_mean <- b_mean + sum(beta.now[i,])/n.regions
-    v = solve(solve(theta.prior.V) + n.hospitals*sigma.now)
-    E = V *(theta.prior.V*theta.prior.E + n.hospitals*sigma.now%*%b_mean)
-    theta <- rmvnorm(1, E, V)
-    return(theta)
-  }
-  #Sample between-hospital variance from full conditional posterior distribution
-  get_sigma <- function(n.hospitals, n.regions, sigma.prior.nu, sigma.prior.S, theta.now, beta.now){
-    S <- rep(0, n.regions)
-    for(i in 1:n.hospitals) S <- S + sum(beta.now[i,] - theta.now)%*%t(beta.now[i,] - theta.now)
-    sigma <- riwish(sigma.prior.nu + n.hospitals, solve(sigma.prior.S + S))
-    return(sigma)
-  }
-  #Sample between-doctor variance from full conditional posterior distribution
-  get_delta <- function(n.doctors, n.hospitals, delta.prior.nu, delta.prior.S, beta.now, gamma.now){
-    S <- rep(0, n.hospitals)
-    for(i in 1:n.doctors) S <- S + sum(gamma.now[i,] - beta.now)%*%t(gamma.now[i,] - beta.now)
-    sigma <- riwish(sigma.prior.nu + n.hospitals, solve(sigma.prior.S + S))
-    return(delta)
-  }
-# DESCRIPTION OF ALGORITHM:
-  #A. Sample fixed effects -- Gibbs
-  #B. Hospital step:
-    #Sample fixed + hospital variance -- Gibbs
-    #Sample fixed + hospital estimate -- Metropolis
-  #C. Doctor step:
-    #Sample fixed + hospital + doctor variance -- Gibbs
-    #Sample fixed + hospital + doctor estimate -- Metropolis
-
