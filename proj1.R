@@ -85,33 +85,25 @@ tm <- ifelse(d.odeath == 0, -10, log(d.odeath)) #Few docs haven't offed one yet!
 gamma.now <- (where_docs %*% diag(tm))
 
 #Number of iterations and bookkeeping
-I <- 100000; a.gamma <- rep(0,D) ; a.beta <- rep(0, H)
+I <- 10000; a.gamma <- rep(0,D) ; a.beta <- rep(0, H)
 THETA <- SIGMA <- matrix(nrow=I, ncol=R)
 colnames(THETA) <- colnames(SIGMA) <- unique(docs$Detailed.Region)
 BETA <- DELTA <- matrix(nrow=I, ncol=H)
 colnames(BETA) <- colnames(DELTA) <- unique(docs$Hospital.Name)
-GAMMA <- matrix(nrow = I, ncol = D)
-colnames(GAMMA) <- unique(docs$Physician.Name)
+
 RBETA <- matrix(nrow = I, ncol = H)
 RGAMMA <- matrix(nrow = I, ncol = D)
-GAMMA.h <- matrix(nrow = I, ncol = D.h)
-D.h <- length(docs$Physician.Name) +1
+D.h <- length(docs$Physician.Name)
+GAMMA <- matrix(nrow = I, ncol = D.h)
+# GAMMA <- matrix(nrow = I, ncol = D)
+colnames(GAMMA) <- unique(docs$Physician.Name)
 pb <- txtProgressBar(style=3)
 
-
 sdocs <- as.numeric(apply(where_docs, 2, sum)-1)
-test <- 1:length(unique(docs$Physician.Name))
-for(i in 1:length(sdocs)){
-  if(sdocs[i] > 0){
-    for(j in (i+1):length(test)){
-      test[j] = test[j] + sdocs[i]
-    }
-  }
-}
-test <- 1
-for(i in 2:length(sdocs)) test <- cbind(test, test[i-1]+sdocs[i])
+test <- 0
+for(i in 2:length(sdocs)) test <- cbind(test, test[i-1]+sdocs[i-1])
 test <- test + 1:length(test)
-test <- c(1,test[1:length(test)-1])
+# test <- c(1,test[1:length(test)])
 for(t in 1:I){
   #GIBBS
   #Update Theta
@@ -126,7 +118,7 @@ for(t in 1:I){
     tb <- where_hosp[,i]*(beta.now[i]-theta.now)
     SS <- SS + t(tb)%*%tb
   }
-  sigma.now <- riwish(sigma.prior.df + H, solve(sigma.prior.s + SS))
+  sigma.now <- riwish(sigma.prior.df + 1, solve(sigma.prior.s + SS))
   
   #METROPOLIS
   r.beta <- rep(0, H)
@@ -153,7 +145,7 @@ for(t in 1:I){
     tb <- where_docs[,i]*(gamma.now[i]-beta.now)
     SS <- SS + tb%*%t(tb)
   }
-  delta.now <- riwish(delta.prior.df + D, solve(delta.prior.s + SS))
+  delta.now <- riwish(delta.prior.df + 1, solve(delta.prior.s + SS))
 
   #METROPOLIS
   r.gamma <- rep(0, D)
@@ -179,7 +171,7 @@ for(t in 1:I){
       gamma.now[ind,i] <- gamma.prop
       a.gamma[i] <- a.gamma[i] + 1
     }
-    GAMMA.h[t,(test[i]):(test[i]+length(ind)-1)] <- gamma.now[ind,i]
+    GAMMA[t,(test[i]):(test[i]+length(ind))] <- gamma.now[ind,i]
   }
   #Store results
   BETA[t,] <- beta.now
@@ -187,8 +179,6 @@ for(t in 1:I){
   SIGMA[t,] <- diag(sigma.now)
   GAMMA[t,] <- apply(gamma.now, 2, mean)
   DELTA[t,] <- diag(delta.now)
-  RBETA[t,] <- r.beta
-  RGAMMA[t,] <- r.gamma
   setTxtProgressBar(pb, t/I)
 }
 gdat <- cbind(melt(BETA))
@@ -200,6 +190,9 @@ g
 expit <- function(theta){
   return(exp(theta)/(1+exp(theta)))
 }
-results <- list(BETA, THETA, SIGMA, GAMMA, DELTA, RBETA, RGAMMA, GAMMA.h)
-saveRDS(results, file="results_mcmc.rds")
+results <- list(beta=BETA, theta=THETA, sigma=SIGMA, gamma=GAMMA, delta=DELTA, rbeta=RBETA, rgamma=RGAMMA)
+saveRDS(results, file="results_mcmc2.rds")
+saveRDS(docs, file="docs.rds")
+saveRDS(where_docs, file="wheredocs.rds")
+saveRDS(where_hosp, file="wheredocs.rds")
 
