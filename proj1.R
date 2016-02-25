@@ -10,18 +10,18 @@ library(ggplot2) #to graph things nicely!
 
 #Read the data and switch from % to probability of death
 docs <- read.xlsx("cardiac.xls",1,header=TRUE) 
-docs$pdeath <- docs$Observed.Mortality.Rate/100
-docs <- docs %>% group_by(Detailed.Region, Procedure) %>% mutate(r.cases = sum(Number.of.Cases), r.death = sum(Number.of.Deaths))
-docs <- docs %>% group_by(Hospital.Name, Procedure) %>% mutate(h.cases = sum(Number.of.Cases), h.death = sum(Number.of.Deaths))
+docs <- docs[Procedure == "CABG"]
+# docs$pdeath <- docs$Observed.Mortality.Rate/100
+docs <- docs %>% group_by(Detailed.Region) %>% mutate(r.cases = sum(Number.of.Cases), r.death = sum(Number.of.Deaths)) %>%
+        mutate(r.pdeath = r.death/r.cases) %>% mutate(r.odeath = r.pdeath/(1-r.pdeath))
+docs <- docs %>% group_by(Hospital.Name) %>% mutate(h.cases = sum(Number.of.Cases), h.death = sum(Number.of.Deaths)) %>% 
+        mutate(h.pdeath = h.death/r.cases) %>% mutate(h.odeath = h.pdeath/(1-h.pdeath))
+docs <- docs %>% group_by(Physician.Name) %>% mutate(pdeath = Number.of.Deaths/Number.of.Cases) %>% 
+        mutate(odeath = pdeath/(1-pdeath))
 
-docs <- docs %>% filter(Procedure == "CABG")
+
 docs$Physician.Name <- factor(as.character(docs$Physician.Name), labels = unique(docs$Physician.Name))
 docs$Hospital.Name <- factor(as.character(docs$Hospital.Name), labels = unique(docs$Hospital.Name))
-
-docs$r.pdeath <- with(docs, r.death/r.cases)
-docs$r.ldeath <- with(docs, r.pdeath/(1+r.pdeath))
-docs$h.pdeath <- with(docs, h.death/h.cases)
-docs$h.ldeath <- with(docs, h.pdeath/(1+h.pdeath))
 
 #docs %>% group_by(Hospital.Name) %>% summarise(n = length(unique(Detailed.Region))) %$% table(n)
 #doc_hosps <- docs %>% group_by(Physician.Name) %>% summarise(n = length(unique(Hospital.Name))) %$% n
@@ -55,33 +55,28 @@ tm.dat <- tm.dat[,c(1,4,5)] %>% distinct()
 doc_list <- hos_list <- list()
 for(i in 1:H){
   li<- as.numeric(unique(docs[as.numeric(docs$Hospital.Name) == i,]$Detailed.Region))
+  do<- as.numeric(unique(docs[as.numeric(docs$Hospital.Name) == i,]$Physician.Name))
   tm <- with(tm.dat[as.numeric(tm.dat$Hospital.Name) == i,], cbind(all.cases, all.deaths))
-  hos_list[[i]] <- list(index = li, dat = tm)
+  hos_list[[i]] <- list(index = li, dat = tm, docs = do, name = as.character(factor(docs$Hospital.Name)[i]))
 }
 
 for(i in 1:D){
   li <- as.numeric(unique(docs[as.numeric(docs$Physician.Name) == i,]$Hospital.Name))
+  re <- as.numeric(unique(docs[as.numeric(docs$Physician.Name) == i,]$Detailed.Region))
   tm <- with(docs[as.numeric(docs$Physician.Name) == i,], cbind(Number.of.Cases, Number.of.Deaths))
-  doc_list[[i]] <- list(index = li, dat = tm)
+  doc_list[[i]] <- list(index = li, dat = tm, name = as.character(factor(docs$Hospital.Name)[i]), reg = re)
 }
 
 #PRIORS
-#Theta, the fixed regions effect, is R-variate-normal distributed with mean mu.prior.E and variance mu.prior.V
-#Sigma, between-hospital variance is R-Inverse-Wishart distributed with df=R and simple shape matrix (for now) 
-#Gamma, between-doctor variance is H-Inverse-Wishart distributed with df=H and simple shape matrix (for now) 
-r.odeath <- docs[,c("Detailed.Region","r.pdeath")] %>% distinct() %>% mutate(odeath = r.pdeath/(1-r.pdeath)) %$% odeath
-h.odeath <- docs[,c("Hospital.Name","h.pdeath")] %>% distinct() %>% mutate(odeath = h.pdeath/(1-h.pdeath)) %$% odeath
-d.odeath <- docs[,c("Physician.Name","Number.of.Cases","Number.of.Deaths")] %>% group_by(Physician.Name) %>% 
-            mutate(pdeath = sum(Number.of.Deaths)/sum(Number.of.Cases)) %>% distinct() %>% mutate(odeath = pdeath/(1-pdeath)) %$% odeath
-
-theta.now <- theta.prior.E <- log(r.odeath)
-theta.prior.V <- diag(var(log(r.odeath)),R)
+odeath <- docs[,c("odeath","Physician.Name")]  %>% distinct() %$% odeath
+theta.now <- theta.prior.E <- log(docs$r.odeath)
+theta.prior.V <- diag(var(log(docs$r.odeath)),R)
 sigma.prior.df <- 1
-sigma.now <- sigma.prior.s <- diag(var(log(r.odeath)),R)
+sigma.now <- sigma.prior.s <- diag(var(log(docs$r.odeath)),R)
 delta.prior.df <- 1
-delta.now <- delta.prior.s <- diag(var(log(h.odeath)),H)
-beta.now <- log(h.odeath)
-tm <- ifelse(d.odeath == 0, -10, log(d.odeath)) #Few docs haven't offed one yet! Way to go, but let's be real.
+delta.now <- delta.prior.s <- diag(var(log(docs$h.odeath)),H)
+beta.now <- log(docs$h.odeath)
+tm <- ifelse(odeath == 0, -10, log(odeath)) #Few docs haven't offed one yet! Way to go, but let's be real.
 gamma.now <- (where_docs %*% diag(tm))
 
 #Number of iterations and bookkeeping
@@ -95,8 +90,7 @@ RBETA <- matrix(nrow = I, ncol = H)
 RGAMMA <- matrix(nrow = I, ncol = D)
 D.h <- length(docs$Physician.Name)
 GAMMA <- matrix(nrow = I, ncol = D.h)
-# GAMMA <- matrix(nrow = I, ncol = D)
-colnames(GAMMA) <- unique(docs$Physician.Name)
+colnames(GAMMA) <- docs$Physician.Name
 pb <- txtProgressBar(style=3)
 
 sdocs <- as.numeric(apply(where_docs, 2, sum)-1)
@@ -120,10 +114,9 @@ for(t in 1:I){
   }
   sigma.now <- riwish(sigma.prior.df + 1, solve(sigma.prior.s + SS))
   
-  #METROPOLIS
-  r.beta <- rep(0, H)
   #Hospitals
   for(i in 1:H){
+    #METROPOLIS UPDATE BETA
     ind <- unlist(c(hos_list[[i]][1]))
     V <- sigma.now[ind,ind]
     beta.prop <- rnorm(1, beta.now[i], sqrt(V/2))
@@ -131,12 +124,9 @@ for(t in 1:I){
     p.beta.now <- dnorm(beta.now[i], theta.now[ind], sqrt(V), log = TRUE)
     p.dat.prop <- dbinom(hos_list[[i]]$dat[2], hos_list[[i]]$dat[1], prob=exp(beta.prop)/(1+exp(beta.prop)), log=T)
     p.dat.now <- dbinom(hos_list[[i]]$dat[2], hos_list[[i]]$dat[1], prob=exp(beta.now[i])/(1+exp(beta.now[i])), log=T)
-    r.beta[i] = p.beta.prop + p.dat.prop - p.beta.now - p.dat.now
+    r = p.beta.prop + p.dat.prop - p.beta.now - p.dat.now
     u = log(runif(1))
-    if(r.beta[i] > u){
-      a.beta[i] <- a.beta[i] + 1
-      beta.now[i] = beta.prop
-    } 
+    if(r > u) beta.now[i] = beta.prop 
   }
   #GIBBS
   #update Delta
@@ -165,12 +155,9 @@ for(t in 1:I){
     p.gamma.now <- funD(tm.gam, beta.now[ind], V, log=TRUE)
     p.dat.prop <- sum(dbinom(doc_list[[i]]$dat[,2], doc_list[[i]]$dat[,2], prob=exp(gamma.prop)/(1+exp(gamma.prop)), log=TRUE))
     p.dat.now <- sum(dbinom(doc_list[[i]]$dat[,2], doc_list[[i]]$dat[,2], prob=exp(tm.gam)/(1+exp(tm.gam)), log=TRUE))
-    r.gamma[i] = p.gamma.prop + p.dat.prop - p.gamma.now - p.dat.now
+    r = p.gamma.prop + p.dat.prop - p.gamma.now - p.dat.now
     u = log(runif(1))
-    if(r.gamma[i] > u){
-      gamma.now[ind,i] <- gamma.prop
-      a.gamma[i] <- a.gamma[i] + 1
-    }
+    if(r > u) gamma.now[ind,i] <- gamma.prop 
     GAMMA[t,(test[i]):(test[i]+length(ind))] <- gamma.now[ind,i]
   }
   #Store results
