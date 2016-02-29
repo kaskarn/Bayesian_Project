@@ -6,30 +6,48 @@ library(ggplot2) #to graph things nicely!
 
 dat <- readRDS("results_mcmc.rds")
 thin <- 1
+burnin <- 1000
+L <- I - burnin
 for(i in 1:length(dat)) dat[[i]] <- dat[[i]][(!(1:nrow(dat[[i]]))%%thin),]
 dat[['gamma']] <- dat[['gamma']][,-178]
 # results <- list(BETA, THETA, SIGMA, GAMMA)
 
-gdat <- melt(dat[[1]])
+gdat.r <- melt(dat[[2]][-c(1:burnin),])
+gdat.r$reg <- rep(unique(docs$Detailed.Region), rep(L, length(unique(docs$Detailed.Region))))
+
+gdat.h <- melt(dat[[1]][-c(1:burnin),])
 tm <- NULL
 for(i in unique(as.numeric(docs$Hospital.Name))) tm <- cbind(tm, hos_list[[i]]$regs)
-gdat$reg <- rep(tm, rep(I/thin, length(tm)))
-gdat$reg <- factor(gdat$reg, labels = levels(docs$Detailed.Region))
+gdat.h$reg <- rep(tm, rep(L/thin, length(tm)))
+gdat.h$reg <- factor(gdat.h$reg, labels = levels(docs$Detailed.Region))
 
 tm <- NULL
-for(i in unique(as.numeric(docs$Physician.Name))) tm <- cbind(tm, doc_list[[i]]$hos)
-gdat$reg <- rep(tm, rep(I/thin, length(tm)))
-gdat$reg <- factor(gdat$reg, labels = levels(docs$Detailed.Region))
+for(i in unique(as.numeric(docs$Hospital.Name))) tm <- cbind(tm, hos_list[[i]]$e_mu)
+gdat.h$e_mu <- rep(tm, rep(L/thin, length(tm)))
 
-g <-  ggplot(gdat %>% filter(reg == "Bronx"), aes(x = X1, y=value)) + geom_line(aes(colour=X2)) +
-  theme(legend.position="none") + ylab("Value") + xlab("Iteration") + facet_grid(X2 ~.)
-g
+tm <- NULL
+for(i in unique(as.numeric(docs$Hospital.Name))) tm <- cbind(tm, hos_list[[i]]$mu)
+gdat.h$mu <- rep(tm, rep(L/thin, length(tm)))
 
-g <-  ggplot(gdat %>% filter(reg == "Bronx"), aes(x = expit(value))) + geom_density(aes(colour=X2)) +
-      theme(legend.position="none") + ylab("Value") + xlab("Iteration") + facet_grid(X2 ~.)
-g
+tm <- NULL
+for(i in unique(as.numeric(docs$Hospital.Name))) tm <- cbind(tm, hos_list[[i]]$mu.r)
+gdat.h$mu.r <- rep(tm, rep(L/thin, length(tm)))
+
+gdat.d <- melt(dat[["gamma"]][-c(1:burnin),])
+
+reg.now <- "Manhattan"
 
 
+g1 <-  ggplot(gdat.h %>% filter(reg == reg.now), aes(x = expit(value), fill=X2)) + geom_density(aes(colour=X2)) +
+      theme(legend.position="none") + ylab("Value") + xlab("Iteration") +
+      facet_grid(X2 ~.) + scale_x_continuous(limits=c(0,0.05),breaks=seq(0,0.05,0.01)) +
+      geom_vline(aes(xintercept = mu.r)) + geom_vline(aes(xintercept = mu)) + geom_vline(aes(xintercept = mu.r)) 
+g1
+
+g2 <-  ggplot(gdat.r, aes(x = expit(value), fill=X2)) + geom_density(aes(colour=X2)) +
+      theme(legend.position="none") + ylab("Value") + xlab("Iteration") +
+      facet_grid(X2 ~.) + scale_x_continuous(limits=c(0,0.05),breaks=seq(0,0.05,0.01)) 
+g2
 expit <- function(theta){
   return(exp(theta)/(1+exp(theta)))
 }
