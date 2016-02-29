@@ -12,10 +12,10 @@ library(ggplot2) #to graph things nicely!
 base <- read.xlsx("cardiac.xls",1,header=TRUE) 
 docs <- base[base$Procedure == "CABG",]
 docs <- docs %>% group_by(Detailed.Region) %>% mutate(r.cases = sum(Number.of.Cases), r.death = sum(Number.of.Deaths)) %>%
-        mutate(r.pdeath = r.death/r.cases) %>% mutate(r.odeath = r.pdeath/(1-r.pdeath))
-docs <- docs %>% group_by(Hospital.Name) %>% mutate(h.cases = sum(Number.of.Cases), h.death = sum(Number.of.Deaths)) %>% 
-        mutate(h.pdeath = h.death/h.cases) %>% mutate(h.odeath = h.pdeath/(1-h.pdeath))
-docs <- docs %>% mutate(pdeath = Number.of.Deaths/Number.of.Cases) %>% mutate(odeath = pdeath/(1-pdeath))
+        mutate(r.pdeath = r.death/r.cases) %>% mutate(r.odeath = r.pdeath/(1-r.pdeath)) %>% 
+        group_by(Hospital.Name) %>% mutate(h.cases = sum(Number.of.Cases), h.death = sum(Number.of.Deaths)) %>% 
+        mutate(h.pdeath = h.death/h.cases) %>% mutate(h.odeath = h.pdeath/(1-h.pdeath)) %>% 
+        mutate(pdeath = Number.of.Deaths/Number.of.Cases) %>% mutate(odeath = pdeath/(1-pdeath))
 
 docs$edeaths <- docs$Expected.Mortality.Rate * docs$Number.of.Cases
 docs$odeath <- ifelse(docs$odeath == 0, -10, log(docs$odeath))
@@ -23,21 +23,17 @@ docs$odeath <- ifelse(docs$odeath == 0, -10, log(docs$odeath))
 docs$Physician.Name <- factor(as.character(docs$Physician.Name), labels = unique(docs$Physician.Name))
 docs$Hospital.Name <- factor(as.character(docs$Hospital.Name), labels = unique(docs$Hospital.Name))
 
-#docs %>% group_by(Hospital.Name) %>% summarise(n = length(unique(Detailed.Region))) %$% table(n)
-#doc_hosps <- docs %>% group_by(Physician.Name) %>% summarise(n = length(unique(Hospital.Name))) %$% n
-#docs %>% group_by(Physician.Name) %>% mutate(n = length(unique(Detailed.Region))) %$% table(n)
-
 R <- length(unique(docs$Detailed.Region))
 H <- length(unique(docs$Hospital.Name))
-D <- length(unique(docs$Physician.Name))
+D <- length(unique(docs$Physician.Name, Hospital.Name))
 hos.N <-  docs %>% group_by(Detailed.Region) %>% summarise(tlen = length(unique(Hospital.Name))) %$% tlen
 doc.N <- docs %>% group_by(Hospital.Name) %>% summarise(tlen = length(unique(Physician.Name))) %$% tlen
 
 #where_Hosp times a beta vector returns sum of betas by region
 where_hosp <- matrix(FALSE, nrow = R, ncol = H)
-colnames(where_hosp) <- unique(docs$Hospital.Name)
-rownames(where_hosp) <- unique(docs$Detailed.Region)
-for(i in as.numeric(unique(docs$Hospital.Name))) where_hosp[unique(as.numeric(docs[as.numeric(docs$Hospital.Name) == i,]$Detailed.Region)), i] <- TRUE
+colnames(where_hosp) <- levels(docs$Hospital.Name)
+rownames(where_hosp) <- levels(docs$Detailed.Region)
+for(i in as.numeric(unique(docs$Detailed.Region))) where_hosp[i, unique(as.numeric(docs[as.numeric(docs$Detailed.Region) == i,]$Hospital.Name))] <- TRUE
 
 where_docs <- matrix(FALSE, nrow = H, ncol = D)
 colnames(where_docs) <- unique(docs$Physician.Name)
@@ -98,7 +94,7 @@ d.odeath <- docs[,c("Physician.Name","Number.of.Cases","Number.of.Deaths")] %>% 
   mutate(pdeath = sum(Number.of.Deaths)/sum(Number.of.Cases)) %>% distinct() %>% mutate(odeath = pdeath/(1-pdeath)) %$% odeath
 
 theta.now <- theta.prior.E <- log(r.odeath)
-theta.prior.V <- diag(var(log(r.odeath)),R)
+theta.prior.V <- diag(var(log(r.odeath)), R)
 sigma.prior.df <- 1
 sigma.now <- sigma.prior.s <- diag(var(log(r.odeath)),R)
 delta.prior.df <- 1
