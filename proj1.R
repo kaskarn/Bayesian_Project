@@ -10,21 +10,29 @@ library(ggplot2) #to graph things nicely!
 
 #Read the data and switch from % to probability of death
 docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>% filter(Procedure == "CABG") %>% 
-  mutate(pdeath = Number.of.Deaths/Number.of.Cases, 
-         odeath = ifelse(Number.of.Deaths == 0, 0.000001, Number.of.Deaths / (Number.of.Cases - Number.of.Deaths))) %>%
-  mutate(edeaths = Expected.Mortality.Rate/100 * Number.of.Cases) %>%
-  group_by(Detailed.Region) %>% 
-  mutate(r.cases = sum(Number.of.Cases), r.deaths = sum(Number.of.Deaths)) %>%
-  mutate(r.pdeath = r.deaths/r.cases) %>% mutate(r.odeath = r.pdeath/(1-r.pdeath)) %>%
-  mutate(r.e_pdeath = sum(edeaths)/r.cases) %>%
-  group_by(Hospital.Name) %>% 
-  mutate(h.cases = sum(Number.of.Cases), h.deaths = sum(Number.of.Deaths)) %>% 
-  mutate(h.pdeath = h.deaths/h.cases, h.odeath = h.deaths/(h.cases - h.deaths)) %>% 
-  mutate(h.e_pdeath = sum(edeaths)/h.cases) %>% ungroup() %>%
-  mutate(Physician.Name = factor(as.character(Physician.Name), labels = unique(docs$Physician.Name))) %>%
-  mutate(Hospital.Name = factor(as.character(Hospital.Name), labels = unique(docs$Hospital.Name))) %>%
-  mutate(dnum = as.numeric(Physician.Name), hnum = as.numeric(Hospital.Name), rnum = as.numeric(Detailed.Region)) %>%
-  arrange(Physician.Name)
+  mutate( pdeath = Number.of.Deaths/Number.of.Cases, 
+          odeath = ifelse(Number.of.Deaths == 0, 0.000001, 
+          Number.of.Deaths / (Number.of.Cases - Number.of.Deaths)), 
+          edeaths = Expected.Mortality.Rate/100 * Number.of.Cases) %>%
+  group_by(Detailed.Region) %>% mutate(
+          r.cases = sum(Number.of.Cases), 
+          r.deaths = sum(Number.of.Deaths), 
+          r.pdeath = r.deaths/r.cases, 
+          r.odeath = r.pdeath/(1-r.pdeath), 
+          r.e_pdeath = sum(edeaths)/r.cases) %>%
+  group_by(Hospital.Name) %>% mutate(
+          h.cases = sum(Number.of.Cases), 
+          h.deaths = sum(Number.of.Deaths), 
+          h.pdeath = h.deaths/h.cases,
+          h.odeath = h.deaths/(h.cases - h.deaths), 
+          h.e_pdeath = sum(edeaths)/h.cases) %>% 
+  ungroup() %>% mutate(
+          Physician.Name = factor(as.character(Physician.Name), labels = unique(docs$Physician.Name)), 
+          Hospital.Name = factor(as.character(Hospital.Name), labels = unique(docs$Hospital.Name)),
+          dnum = as.numeric(Physician.Name), 
+          hnum = as.numeric(Hospital.Name), 
+          rnum = as.numeric(Detailed.Region)) %>%
+  arrange(Physician.Name, Hospital.Name)
 
 D <- nrow(docs)
 R <- length(unique(docs$Detailed.Region))
@@ -36,23 +44,23 @@ I <- 10000
 #Create lists containing regional, hospital and doctor-level information
 regions <- hospitals <- doctors <- list()
 for(i in 1:R){
-  tm <- docs[docs$rnum == i,]
+  tm <- docs[docs$rnum == i,] %>% arrange(rnum)
   rname <- unique(tm$Detailed.Region)
   dl <- unique(tm$hnum)
   d <- unique(tm$r.deaths)
   pd <- unique(tm$r.pdeath)
   epd <- unique(tm$r.e_pdeath)
-  regions[[i]] <- list(name = rname, down = dl, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I))
+  regions[[i]] <- list(name = rname, down = dl, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I), sigma_p = sp)
 }
 for(i in 1:H){
-  tm <- docs[docs$hnum == i,]
+  tm <- docs[docs$hnum == i,] %>% arrange(hnum, rnum)
   rname <- unique(tm$Hospital.Name)
   dl <- unique(tm$hnum)
   ul <- unique(tm$rnum)
   d <- unique(tm$r.deaths)
   pd <- unique(tm$r.pdeath)
   epd <- unique(tm$r.e_pdeath)
-  hospitals[[i]] <- list(name = rname, down = dl, up = ul, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I))
+  dp <- tm %>% mutate(tv = Number.of.Cases/Number.of.Deaths, tv2 = tv/(1-tv)) %$% var(unique(tv2))
 }
 for(i in 1:D){
   tm <- docs[docs$dnum == i,]
@@ -63,21 +71,22 @@ for(i in 1:D){
   epd <- unique(tm$r.e_pdeath)
   doctors[[i]] <- list(name = rname, up = ul, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I))
 }
-#priors
-r.odeath <- docs[,c("Detailed.Region","r.pdeath")] %>% distinct() %>% mutate(odeath = r.pdeath/(1-r.pdeath)) %$% odeath
-h.odeath <- docs[,c("Hospital.Name","h.pdeath")] %>% distinct() %>% mutate(odeath = h.pdeath/(1-h.pdeath)) %$% odeath
-d.odeath <- docs[,c("Physician.Name","Number.of.Cases","Number.of.Deaths")] %>% group_by(Physician.Name) %>% 
-  mutate(pdeath = sum(Number.of.Deaths)/sum(Number.of.Cases)) %>% distinct() %>% mutate(odeath = pdeath/(1-pdeath)) %$% odeath
 
-theta_all <- theta.prior.E <- docs %>% mutate(tm = log(sum(Number.of.Deaths)/sum(Number.of.Cases))) %>% mutate(tm2 = tm/(1-tm)) %$% unique(tm2)
-theta.prior.V <- 100
+theta.prior.e <- mean(log(unique(r.odeath)))
+theta.now <-  docs[,c("rnum", "r.odeath")] %>% distinct() %>% arrange(rnum) %$% log(r.odeath)
+theta.prior.v <- 0.1
+beta.now <- docs[,c("hnum", "h.odeath")] %>% distinct() %>% arrange(hnum, rnum) %$% log(h.odeath)
+gamma.now <- docs %$% log(odeath)
+
+for(i in 1:R) sigma.now[i] <- docs[,c("rnum", "hnum", "h.odeath")] %>% distinct() %>% filter(rnum == i) %>% arrange(hnum, rnum) %$% var(log(h.odeath))
+sigma.now[is.na(sigma.now)] <- mean(sigma.now, na.rm = TRUE)
 sigma.prior.df <- 1
-sigma.now <- sigma.prior.s <- diag(var(log(r.odeath)),R)
+sigma.prior.ss <- (beta.now - rep(theta.now, t(hos.N))) %*%t(beta.now - rep(theta.now, t(hos.N)))
+
+for(i in 1:R) delta.now <- docs %$% var(log(odeath))
+delta.prior.s <- sum(log(odeath^2))
 delta.prior.df <- 1
-delta.now <- delta.prior.s <- diag(var(log(h.odeath)),H)
-beta.now <- log(h.odeath)
-tm <- ifelse(d.odeath == 0, -10, log(d.odeath)) #Few docs haven't offed one yet! Way to go, but let's be real.
-gamma.now <- (where_docs %*% diag(tm))
+
 
 #Number of iterations and bookkeeping
 I <- 10000
