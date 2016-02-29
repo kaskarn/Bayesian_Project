@@ -29,7 +29,7 @@ docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>% filter(Procedure == "CABG") %
   ungroup() %>% mutate(
           Physician.Name = factor(as.character(Physician.Name), labels = unique(docs$Physician.Name)), 
           Hospital.Name = factor(as.character(Hospital.Name), labels = unique(docs$Hospital.Name)),
-          dnum = as.numeric(Physician.Name), 
+          dnum = row_number(), 
           hnum = as.numeric(Hospital.Name), 
           rnum = as.numeric(Detailed.Region)) %>%
   arrange(Physician.Name, Hospital.Name)
@@ -41,55 +41,54 @@ hos.N <-  docs %>% group_by(Detailed.Region) %>% summarise(tlen = length(unique(
 doc.N <- docs %>% group_by(Hospital.Name) %>% summarise(tlen = length(unique(Physician.Name))) %$% tlen
 
 I <- 10000
-#Create lists containing regional, hospital and doctor-level information
+#Create lists containing regional, hospital and doctor-level information, including priors!
 regions <- hospitals <- doctors <- list()
+theta.prior.e <- mean(log(unique(r.odeath)))
+theta.now <-  docs[,c("rnum", "r.odeath")] %>% distinct() %>% arrange(rnum) %$% log(r.odeath)
+theta.prior.v <- 0.1
+
+sigma.now <- sigma.prior <- numeric(R)
 for(i in 1:R){
-  tm <- docs[docs$rnum == i,] %>% arrange(rnum)
+  tm <- docs[docs$rnum == i,]
   rname <- unique(tm$Detailed.Region)
   dl <- unique(tm$hnum)
   d <- unique(tm$r.deaths)
   pd <- unique(tm$r.pdeath)
   epd <- unique(tm$r.e_pdeath)
-  regions[[i]] <- list(name = rname, down = dl, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I), sigma_p = sp)
+  s.p.v <- tm[tm$rnum == i,c("rnum", "h.odeath")] %>% distinct() %$% var(log(h.odeath))
+  regions[[i]] <- list(name = rname, down = dl, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I),
+                       sigma.prior.v <- s.p.v)
+  sigma.now[i] <- s.p.v
 }
+
+delta.now <- beta.now <- numeric(H)
 for(i in 1:H){
-  tm <- docs[docs$hnum == i,] %>% arrange(hnum, rnum)
-  rname <- unique(tm$Hospital.Name)
+  tm <- docs[docs$hnum == i,]
+  hname <- unique(tm$Hospital.Name)
   dl <- unique(tm$hnum)
   ul <- unique(tm$rnum)
   d <- unique(tm$r.deaths)
   pd <- unique(tm$r.pdeath)
   epd <- unique(tm$r.e_pdeath)
-  dp <- tm %>% mutate(tv = Number.of.Cases/Number.of.Deaths, tv2 = tv/(1-tv)) %$% var(unique(tv2))
+  d.p <- tm[,c("dnum", "odeath")] %>% distinct() %$% var(log(odeath))
+  hospitals[[i]] <- list(name = hname, up = ul,  down = dl, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I),
+                         delta.prior <- d.p)
+  delta.now[i] <- d.p
+  beta.now[i] <- tm[,c("hnum", "h.odeath")] %>% distinct() %$% log(h.odeath)
 }
 for(i in 1:D){
   tm <- docs[docs$dnum == i,]
-  rname <- unique(tm$Detailed.Region)
+  dname <- unique(tm$Detailed.Region)
   ul <- unique(tm$hnum)
   d <- unique(tm$r.deaths)
   pd <- unique(tm$r.pdeath)
   epd <- unique(tm$r.e_pdeath)
-  doctors[[i]] <- list(name = rname, up = ul, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I))
+  doctors[[i]] <- list(name = dname, up = ul, deaths = d, p_death = pd, e_pdeath = epd, post_e = numeric(I))
 }
-
-theta.prior.e <- mean(log(unique(r.odeath)))
-theta.now <-  docs[,c("rnum", "r.odeath")] %>% distinct() %>% arrange(rnum) %$% log(r.odeath)
-theta.prior.v <- 0.1
-beta.now <- docs[,c("hnum", "h.odeath")] %>% distinct() %>% arrange(hnum, rnum) %$% log(h.odeath)
-gamma.now <- docs %$% log(odeath)
-
-for(i in 1:R) sigma.now[i] <- docs[,c("rnum", "hnum", "h.odeath")] %>% distinct() %>% filter(rnum == i) %>% arrange(hnum, rnum) %$% var(log(h.odeath))
-sigma.now[is.na(sigma.now)] <- mean(sigma.now, na.rm = TRUE)
-sigma.prior.df <- 1
-sigma.prior.ss <- (beta.now - rep(theta.now, t(hos.N))) %*%t(beta.now - rep(theta.now, t(hos.N)))
-
-for(i in 1:R) delta.now <- docs %$% var(log(odeath))
-delta.prior.s <- sum(log(odeath^2))
-delta.prior.df <- 1
 
 
 #Number of iterations and bookkeeping
-I <- 10000
+I <- 1000
 THETA <- SIGMA <- matrix(nrow=I, ncol=R)
 colnames(THETA) <- colnames(SIGMA) <- unique(docs$Detailed.Region)
 BETA <- DELTA <- matrix(nrow=I, ncol=H)
