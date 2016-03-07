@@ -16,22 +16,23 @@ logit <- function(theta){
   return(log(theta/(1-theta)))
 }
 #Iterations
-I <- 150000
+I <- 15000
 ptm <- proc.time()
 
-#Read the data and switch from % to probability of death
-docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>% filter(Procedure == "CABG") %>%
-  mutate( pdeath = Number.of.Deaths/Number.of.Cases, 
-          odeath = ifelse(Number.of.Deaths == 0, 0.000001, 
-                          Number.of.Deaths / (Number.of.Cases - Number.of.Deaths)), 
-          edeaths = Expected.Mortality.Rate/100 * Number.of.Cases) %>%
-  group_by(Detailed.Region) %>% mutate(
+##### Read Data #####
+docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>%
+  group_by(Procedure) %>% mutate( 
+    pdeath = Number.of.Deaths/Number.of.Cases, 
+    odeath = ifelse(Number.of.Deaths == 0, 0.000001, 
+                    Number.of.Deaths / (Number.of.Cases - Number.of.Deaths)), 
+    edeaths = Expected.Mortality.Rate/100 * Number.of.Cases) %>%
+  group_by(Detailed.Region, Procedure) %>% mutate(
     r.cases = sum(Number.of.Cases), 
     r.deaths = sum(Number.of.Deaths), 
     r.pdeath = r.deaths/r.cases, 
     r.odeath = r.pdeath/(1-r.pdeath), 
     r.e_pdeath = sum(edeaths)/r.cases) %>%
-  group_by(Hospital.Name) %>% mutate(
+  group_by(Hospital.Name, Procedure) %>% mutate(
     h.cases = sum(Number.of.Cases), 
     h.deaths = sum(Number.of.Deaths), 
     h.pdeath = h.deaths/h.cases,
@@ -40,127 +41,122 @@ docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>% filter(Procedure == "CABG") %
   ungroup() %>% mutate(
     Physician.Name = factor(as.character(Physician.Name), labels = unique(Physician.Name)), 
     Hospital.Name = factor(as.character(Hospital.Name), labels = unique(Hospital.Name)),
-    dnum = row_number(), 
+    dnum = as.numeric(Physician.Name), 
     hnum = as.numeric(Hospital.Name), 
-    rnum = as.numeric(Detailed.Region)) %>%
+    rnum = as.numeric(Detailed.Region),
+    pnum = as.numeric(Procedure)) %>%
   arrange(Physician.Name, Hospital.Name)
 saveRDS(docs, file = "docs.rds")
 
-D <- nrow(docs)
+D <- length(unique(docs$Physician.Name))
 R <- length(unique(docs$Detailed.Region))
 H <- length(unique(docs$Hospital.Name))
 
-#Create lists containing regional, hospital and doctor-level information, including priors!
+##### lookup-tables #####
 regions <- hospitals <- doctors <- list()
-theta.now <-  docs[,c("rnum", "r.odeath")] %>% distinct() %>% arrange(rnum) %$% log(r.odeath)
-theta.prior.v <- 0.1
-sigma.prior.df <- 10
-delta.prior.df <- 20
-
-sigma.now <- numeric(R)
 for(i in 1:R){
   tm <- docs[docs$rnum == i,]
-  rname <- unique(tm$Detailed.Region)
-  dl <- unique(tm$hnum)
-  d <- unique(tm$r.deaths)
-  pd <- unique(tm$r.pdeath)
-  epd <- unique(tm$r.e_pdeath)
-  s.p.v <- tm[tm$rnum == i,c("rnum", "h.odeath")] %>% distinct() %$% var(log(h.odeath))
-  sigma.now[i] <- 10
-  regions[[i]] <- list(name = rname, down = dl, deaths = d, p_death = pd, e_pdeath = epd, sigma.prior.v = sigma.now[i])
+  name <- unique(tm$Detailed.Region)
+  dl <- rbind(unique(tm[tm$pnum == 1,]$hnum), unique(tm[tm$pnum == 2,]$hnum))
+  deaths <- c(unique(tm[tm$pnum == 1,]$r.deaths), unique(tm[tm$pnum == 2,]$r.deaths))
+  cases <- c(unique(tm[tm$pnum == 1,]$r.cases), unique(tm[tm$pnum == 2,]$r.cases))
+  p_death <- c(unique(tm[tm$pnum == 1,]$r.pdeath), unique(tm[tm$pnum == 2,]$r.pdeath))
+  e_pdeath <- c(unique(tm[tm$pnum == 1,]$r.e_pdeath), unique(tm[tm$pnum == 2,]$r.e_pdeath))
+  regions[[i]] <- list(name = name, down = dl, cases = cases,
+                       deaths = deaths, p_death = pdeath, e_pdeath = e_pdeath)
 }
-
-delta.now <- beta.now <- numeric(H)
+beta.now <- numeric(H)
 for(i in 1:H){
   tm <- docs[docs$hnum == i,]
-  hname <- unique(tm$Hospital.Name)
-  dl <- unique(tm$dnum)
-  ul <- unique(tm$rnum)
-  d <- unique(tm$h.deaths)
-  ca <- unique(tm$h.cases)
-  pd <- unique(tm$h.pdeath)
-  epd <- unique(tm$h.e_pdeath)
-  d.p <- tm[,c("dnum", "odeath")] %>% distinct() %$% var(log(odeath))
-  delta.now[i] <- 10
-  hospitals[[i]] <- list(name = hname, up = ul,  down = dl, deaths = d, cases = ca, p_death = pd, e_pdeath = epd,
-                         delta.prior.v = delta.now[i])
-  beta.now[i] <- tm[,c("hnum", "h.odeath")] %>% distinct() %$% log(h.odeath)
+  name <- unique(tm$Hospital.Name)
+  dl <- rbind(unique(tm[tm$dnum == 1,]$rnum), unique(tm[tm$dnum == 2,]$rnum))
+  ul <- rbind(unique(tm[tm$pnum == 1,]$rnum), unique(tm[tm$pnum == 2,]$rnum))
+  deaths <- c(unique(tm[tm$pnum == 1,]$h.deaths), unique(tm[tm$pnum == 2,]$h.deaths))
+  cases <- c(unique(tm[tm$pnum == 1,]$h.cases), unique(tm[tm$pnum == 2,]$h.cases))
+  p_death <- c(unique(tm[tm$pnum == 1,]$h.pdeath), unique(tm[tm$pnum == 2,]$h.pdeath))
+  e_pdeath <- c(unique(tm[tm$pnum == 1,]$h.e_pdeath), unique(tm[tm$pnum == 2,]$h.e_pdeath))
+  hospitals[[i]] <- list(name = name, up = ul,  down = dl, deaths = deaths, cases = cases, 
+                         p_death = p_death, e_pdeath = e_pdeath)
 }
 gamma.now <- numeric(D)
 for(i in 1:D){
   tm <- docs[docs$dnum == i,]
-  dname <- unique(tm$Physician.Name)
-  ul <- unique(tm$hnum)
-  d <- unique(tm$Number.of.Deaths)
-  ca <- unique(tm$Number.of.Cases)
-  pd <- unique(tm$pdeath)
-  epd <- unique(tm$Expected.Mortality.Rate/100)
-  doctors[[i]] <- list(name = dname, up = ul, deaths = d, cases = ca, p_death = pd, e_pdeath = epd)
-  gamma.now[i] <- tm[,c("dnum", "odeath")] %>% distinct() %$% log(odeath)
+  name <- unique(tm$Physician.Name)
+  ul <- unique(tm$rnum)
+  deaths <- c(unique(tm[tm$pnum == 1,]$Number.of.Deaths), unique(tm[tm$pnum == 2,]$Number.of.Deaths))
+  cases <- c(unique(tm[tm$pnum == 1,]$Number.of.Cases), unique(tm[tm$pnum == 2,]$Number.of.Cases))
+  p_death <- c(unique(tm[tm$pnum == 1,]$pdeath), unique(tm[tm$pnum == 2,]$pdeath))
+  e_pdeath <- c(unique(tm[tm$pnum == 1,]$Expected.Mortality.Rate/100), unique(tm[tm$pnum == 2,]$Expected.Mortality.Rate/100))
+  doctors[[i]] <- list(name = name, up = ul, deaths = deaths, cases = cases,
+                       p_death = p_death, e_pdeath = e_pdeath)
 }
 
-theta.prior.e <- numeric(R)
-for(i in 1:R) theta.prior.e[i] <- logit(regions[[i]]$e_pdeath)
+##### priors #####
+sigma.prior.df <- 10; sigma.prior.s <- sigma.now <- 1
+delta.prior.df <- 50; delta.prior.s <- delta.now <- 1
+theta.prior.v <- 0.1
+theta.prior.e <- theta.now <- matrix(nrow=2, ncol=R)
+for(i in 1:R) theta.prior.e[,i] <- theta.now[,i] <- c(logit(regions[[i]]$e_pdeath[1]), 
+                                                      logit(regions[[i]]$e_pdeath[2]))
 
-#Bookkeeping
+##### Bookkeeping #####
 pb <- txtProgressBar(style=3)
 
-n_vec <- numeric(R)
-THETA <- SIGMA <- matrix(nrow = I, ncol = R)
-for(i in 1:R) n_vec[i] <- as.numeric(regions[[i]]$name)
-colnames(SIGMA) <- colnames(THETA) <- n_vec
+reg.names <- lapply(1:R, function(i) regions[[i]]$name)
+hos.names <- lapply(1:H, function(i) hospitals[[i]]$name)
+doc.names <- lapply(1:D, function(i) doctors[[i]]$name)
 
-n_vec <- numeric(H)
-for(i in 1:H) n_vec[i] <- as.numeric(hospitals[[i]]$name)
-BETA <- DELTA <- matrix(nrow = I, ncol = H)
-colnames(BETA) <- colnames(DELTA) <- n_vec
-
-n_vec <- numeric(D)
+THETA <- matrix(nrow = I, ncol = R)
+colnames(THETA) <- unlist(reg.names)
+BETA <- matrix(nrow = I, ncol = H)
+colnames(BETA) <- unlist(hos.names)
 GAMMA <- matrix(nrow = I, ncol = D)
-for(i in 1:D) n_vec[i] <- i
-colnames(GAMMA) <- n_vec
+colnames(GAMMA) <- unlist(doc.names)
+
+beta.now <- rep(0,H)
+gamma.now <- rep(0,D)
 
 #Launch algorithm!
 for(t in 1:I){
   #GIBBS
   #Update Theta and sigma
-  for(i in 1:R){
-    H.now <- length(regions[[i]]$down)
-    if(H.now >1){
-      b_mean <- mean(beta.now[regions[[i]]$down])
-      v <- solve(solve(theta.prior.v) + H.now*solve(sigma.now[i]))
-      e <- v*(theta.prior.e*solve(theta.prior.v) + H.now*solve(sigma.now[i])*b_mean)
-      theta.now[i] <- rnorm(1, e, sqrt(v))
-    }else theta.now[i] <- rnorm(1, (beta.now[i] + theta.prior.e)/2, theta.prior.v)
+  for(j in 1:2){
+    for(i in 1:R){
+      H.now <- length(regions[[i]]$down[j,])
+      b_mean <- mean(beta.now[regions[[i]]$down[j,]]+theta.now[j,i])
+      v <- solve(solve(theta.prior.v) + H.now*solve(sigma.now))
+      e <- v*(theta.prior.e[j,i]*solve(theta.prior.v) + H.now*solve(sigma.now)*b_mean)
+      theta.now[j,i] <- rnorm(1, e, sqrt(v))
+    }
   }
-  for(i in 1:R){
-    df <- sigma.prior.df + H.now
-    ss <- regions[[i]]$sigma.prior.v*sigma.prior.df + sum((beta.now[regions[[i]]$down]-theta.now[i])^2)
-    sigma.now[i] <- rinvgamma(1, df/2, ss/2)
-  }
+  
+  df <- sigma.prior.df + H
+  ss <- sigma.prior.s * sigma.prior.df + sum(unlist(lapply(1:R, function (i) sum(beta.now[regions[[i]]$down]^2))))
+  sigma.now <- rinvgamma(1, df/2, ss/2)
   
   #METROPOLIS
   #Hospitals
   for(i in 1:H) {
-    if(length(regions[[hospitals[[i]]$up]]$down) == 1){ 
-      beta.now[i] = theta.now[hospitals[[i]]$up]
-    }else{
-      beta.prop <- rnorm(1, beta.now[i], sqrt(sigma.now[hospitals[[i]]$up]/2))
-      if(is.nan(expit(beta.prop))) next
-      p.beta.prop <- dnorm(beta.prop, theta.now[hospitals[[i]]$up], sqrt(sigma.now[hospitals[[i]]$up]), log = TRUE)
-      p.beta.now <- dnorm(beta.now[i], theta.now[hospitals[[i]]$up], sqrt(sigma.now[hospitals[[i]]$up]), log = TRUE)
-      p.dat.prop <- dbinom(hospitals[[i]]$deaths, hospitals[[i]]$cases, prob=expit(beta.prop), log = TRUE)
-      p.dat.now <- dbinom(hospitals[[i]]$deaths, hospitals[[i]]$cases, prob=expit(beta.now[i]), log = TRUE)
-      r = p.beta.prop + p.dat.prop - p.beta.now - p.dat.now
-      if(log(runif(1)) < r) beta.now[i] <- beta.prop
-    }
+    beta.prop <- rnorm(1, beta.now[i], sigma.now/2)
+    if(is.nan(expit(beta.prop))) next
+    p.beta.prop <- dnorm(beta.prop, 0, sqrt(sigma.now), log = TRUE)
+    p.beta.now <- dnorm(beta.now[i], 0, sqrt(sigma.now), log = TRUE)
+    p.dat.prop <- sum(dbinom(hospitals[[i]]$deaths[1], hospitals[[i]]$cases[1], 
+                             prob=expit(beta.prop + theta.now[1,hospitals[[i]]$up[1]]), log = TRUE), 
+                      dbinom(hospitals[[i]]$deaths[2], hospitals[[i]]$cases[2], 
+                             prob=expit(beta.prop + theta.now[2,hospitals[[i]]$up[2]]), log = TRUE), na.rm = TRUE)
+    p.dat.now <-  sum(dbinom(hospitals[[i]]$deaths[1], hospitals[[i]]$cases[1], 
+                             prob=expit(beta.now[i] + theta.now[1,hospitals[[i]]$up[1]]), log = TRUE), 
+                      dbinom(hospitals[[i]]$deaths[2], hospitals[[i]]$cases[2], 
+                             prob=expit(beta.now[i] + theta.now[2,hospitals[[i]]$up[2]]), log = TRUE), na.rm = TRUE)
+    r = p.beta.prop + p.dat.prop - p.beta.now - p.dat.now
+    if(log(runif(1)) < r) beta.now[i] <- beta.prop
   }
-  for(i in 1:H){
-    D.now <- length(hospitals[[i]]$down)
-    df <- delta.prior.df + D.now
-    ss <- hospitals[[i]]$delta.prior.v*delta.prior.df + sum((gamma.now[hospitals[[i]]$down] - beta.now[i])^2)
-    delta.now[i] <- rinvgamma(1, df/2, ss/2)
-  }
+  
+  df <- delta.prior.df + D
+  ss <- delta.prior.s * sigma.prior.df + sum(unlist(lapply(1:H, function (i) sum(gamma.now[hospitals[[i]]$down]^2))))
+  delta.now <- rinvgamma(1, df/2, ss/2)
+
   for(i in 1:D){
     if(length(hospitals[[doctors[[i]]$up]]$down) == 1){ 
       gamma.now[i] = beta.now[doctors[[i]]$up]
