@@ -11,35 +11,40 @@ library(ggplot2) #to graph things nicely!
 expit <- function(theta){
   return(exp(theta)/(1+exp(theta)))
 }
+#logit function
+logit <- function(theta){
+  return(log(theta/(1-theta)))
+}
 #Iterations
-I <- 70000
+I <- 150000
 ptm <- proc.time()
 
 #Read the data and switch from % to probability of death
-docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>% filter(Procedure == "CABG") %>% 
+docs <- read.xlsx("cardiac.xls",1,header=TRUE) %>% filter(Procedure == "CABG") %>%
   mutate( pdeath = Number.of.Deaths/Number.of.Cases, 
           odeath = ifelse(Number.of.Deaths == 0, 0.000001, 
-          Number.of.Deaths / (Number.of.Cases - Number.of.Deaths)), 
+                          Number.of.Deaths / (Number.of.Cases - Number.of.Deaths)), 
           edeaths = Expected.Mortality.Rate/100 * Number.of.Cases) %>%
   group_by(Detailed.Region) %>% mutate(
-          r.cases = sum(Number.of.Cases), 
-          r.deaths = sum(Number.of.Deaths), 
-          r.pdeath = r.deaths/r.cases, 
-          r.odeath = r.pdeath/(1-r.pdeath), 
-          r.e_pdeath = sum(edeaths)/r.cases) %>%
+    r.cases = sum(Number.of.Cases), 
+    r.deaths = sum(Number.of.Deaths), 
+    r.pdeath = r.deaths/r.cases, 
+    r.odeath = r.pdeath/(1-r.pdeath), 
+    r.e_pdeath = sum(edeaths)/r.cases) %>%
   group_by(Hospital.Name) %>% mutate(
-          h.cases = sum(Number.of.Cases), 
-          h.deaths = sum(Number.of.Deaths), 
-          h.pdeath = h.deaths/h.cases,
-          h.odeath = h.deaths/(h.cases - h.deaths), 
-          h.e_pdeath = sum(edeaths)/h.cases) %>% 
+    h.cases = sum(Number.of.Cases), 
+    h.deaths = sum(Number.of.Deaths), 
+    h.pdeath = h.deaths/h.cases,
+    h.odeath = h.deaths/(h.cases - h.deaths), 
+    h.e_pdeath = sum(edeaths)/h.cases) %>% 
   ungroup() %>% mutate(
-          Physician.Name = factor(as.character(Physician.Name), labels = unique(Physician.Name)), 
-          Hospital.Name = factor(as.character(Hospital.Name), labels = unique(Hospital.Name)),
-          dnum = row_number(), 
-          hnum = as.numeric(Hospital.Name), 
-          rnum = as.numeric(Detailed.Region)) %>%
+    Physician.Name = factor(as.character(Physician.Name), labels = unique(Physician.Name)), 
+    Hospital.Name = factor(as.character(Hospital.Name), labels = unique(Hospital.Name)),
+    dnum = row_number(), 
+    hnum = as.numeric(Hospital.Name), 
+    rnum = as.numeric(Detailed.Region)) %>%
   arrange(Physician.Name, Hospital.Name)
+saveRDS(docs, file = "docs.rds")
 
 D <- nrow(docs)
 R <- length(unique(docs$Detailed.Region))
@@ -47,10 +52,10 @@ H <- length(unique(docs$Hospital.Name))
 
 #Create lists containing regional, hospital and doctor-level information, including priors!
 regions <- hospitals <- doctors <- list()
-theta.prior.e <- mean(log(unique(docs$r.odeath)))
 theta.now <-  docs[,c("rnum", "r.odeath")] %>% distinct() %>% arrange(rnum) %$% log(r.odeath)
 theta.prior.v <- 0.1
-sigma.prior.df <- delta.prior.df <- 1
+sigma.prior.df <- 10
+delta.prior.df <- 20
 
 sigma.now <- numeric(R)
 for(i in 1:R){
@@ -61,7 +66,7 @@ for(i in 1:R){
   pd <- unique(tm$r.pdeath)
   epd <- unique(tm$r.e_pdeath)
   s.p.v <- tm[tm$rnum == i,c("rnum", "h.odeath")] %>% distinct() %$% var(log(h.odeath))
-  sigma.now[i] <- s.p.v
+  sigma.now[i] <- 10
   regions[[i]] <- list(name = rname, down = dl, deaths = d, p_death = pd, e_pdeath = epd, sigma.prior.v = sigma.now[i])
 }
 
@@ -76,7 +81,7 @@ for(i in 1:H){
   pd <- unique(tm$h.pdeath)
   epd <- unique(tm$h.e_pdeath)
   d.p <- tm[,c("dnum", "odeath")] %>% distinct() %$% var(log(odeath))
-  delta.now[i] <- d.p
+  delta.now[i] <- 10
   hospitals[[i]] <- list(name = hname, up = ul,  down = dl, deaths = d, cases = ca, p_death = pd, e_pdeath = epd,
                          delta.prior.v = delta.now[i])
   beta.now[i] <- tm[,c("hnum", "h.odeath")] %>% distinct() %$% log(h.odeath)
@@ -93,16 +98,25 @@ for(i in 1:D){
   doctors[[i]] <- list(name = dname, up = ul, deaths = d, cases = ca, p_death = pd, e_pdeath = epd)
   gamma.now[i] <- tm[,c("dnum", "odeath")] %>% distinct() %$% log(odeath)
 }
+
+theta.prior.e <- numeric(R)
+for(i in 1:R) theta.prior.e[i] <- logit(regions[[i]]$e_pdeath)
+
 #Bookkeeping
 pb <- txtProgressBar(style=3)
-n_vec <- numeric(H)
+
+n_vec <- numeric(R)
 THETA <- SIGMA <- matrix(nrow = I, ncol = R)
-colnames(SIGMA) <- colnames(THETA) <- unique(docs$rnum)
+for(i in 1:R) n_vec[i] <- as.numeric(regions[[i]]$name)
+colnames(SIGMA) <- colnames(THETA) <- n_vec
+
+n_vec <- numeric(H)
 for(i in 1:H) n_vec[i] <- as.numeric(hospitals[[i]]$name)
 BETA <- DELTA <- matrix(nrow = I, ncol = H)
 colnames(BETA) <- colnames(DELTA) <- n_vec
-GAMMA <- matrix(nrow = I, ncol = D)
+
 n_vec <- numeric(D)
+GAMMA <- matrix(nrow = I, ncol = D)
 for(i in 1:D) n_vec[i] <- i
 colnames(GAMMA) <- n_vec
 
@@ -168,31 +182,77 @@ for(t in 1:I){
   GAMMA[t,] <- gamma.now
   DELTA[t,] <- delta.now
   setTxtProgressBar(pb, t/I)
-
+  
 }
 proc.time() - ptm
 
 res <- list(beta = BETA, sigma = SIGMA, theta = THETA, gamma = GAMMA, delta = DELTA, hospitals = hospitals, regions = regions, doctors = doctors)
-saveRDS(res, file=paste("results_mcmc_", I, ".rds", sep = ""))
+IB <- nrow(res[[1]]) - burnin; thin <- 50
+keep <- (!((1:IB)%%thin))
+size <- sum(keep)
 
-# gdat <- cbind(melt(BETA))
-# n_vec <- character(H)
-# for(i in 1:H) n_vec[i] <- as.character(regions[[hospitals[[i]]$up]]$name)
-# gdat$reg <- rep(n_vec, rep(I, length(n_vec)))
-# for(i in 1:H) n_vec[i] <- as.character(regions[[hospitals[[i]]$up]]$p_death)
-# gdat$r_p <- rep(n_vec, rep(I, length(n_vec)))
-# for(i in 1:H) n_vec[i] <- hospitals[[i]]$p_death
-# gdat$h_p <- as.numeric(rep(n_vec, rep(I, length(n_vec))))
-# gdat$X2 <- factor(gdat$X2, labels = levels(docs$Hospital.Name))
-# 
-# g <-  ggplot(gdat[gdat$reg == "Bronx",], aes(x = X1, y=value)) + geom_line(aes(colour=X2)) +
-#   theme(legend.position="none") + ylab("Value") + xlab("Iteration") + facet_grid(X2 ~.)
-# g
-# 
-# reg.now <- "Manhattan"
-# g1 <-  ggplot(gdat %>% filter(reg == reg.now), aes(x = expit(value), fill=X2)) + geom_density(aes(colour=X2)) +
-#   theme(legend.position="none") + ylab("Value") + xlab("Iteration") +
-#   facet_grid(X2 ~.) + scale_x_continuous(limits=c(0,0.05),breaks=seq(0,0.05,0.01))+ 
-#   geom_vline(aes(xintercept = 0.016867)) + geom_vline(aes(xintercept = h_p), colour="red")
-# g1
-# saveRDS(res <- list(beta = BETA, sigma = SIGMA, theta = THETA, gamma = GAMMA, delta = DELTA, hospitals, regions, doctors), file="results_mcmc_new.rds")
+tm <- (res[[3]][-(1:burnin),])[keep,]
+res.regions <- melt(tm)
+
+n_vec <- character(R)
+for(i in 1:R) n_vec[i] <- as.character(regions[[i]]$name)
+res.regions$X2 <- factor(res.regions$X2, labels = n_vec)
+for(i in 1:R) n_vec[i] <- regions[[i]]$e_pdeath
+res.regions$rat <- as.numeric(rep(n_vec, rep(size, R)))
+res.regions$rat <- expit(res.regions$value) / res.regions$rat
+
+tm <- (res[[1]][-(1:burnin),])[keep,]
+res.hospitals <- melt(tm)
+
+n_vec <- tnam <- character(H)
+for(i in 1:H) n_vec[i] <- as.character(regions[[hospitals[[i]]$up]]$name)
+res.hospitals$reg <- rep(n_vec, rep(size, H))
+for(i in 1:H) n_vec[i] <- regions[[hospitals[[i]]$up]]$p_death
+res.hospitals$r_p <- as.numeric(rep(n_vec, rep(size, length(n_vec))))
+
+n_vec <- numeric(H)
+for(i in 1:H){
+  n_vec[i] <- hospitals[[i]]$p_death
+  tnam[i] <- as.character(hospitals[[i]]$name)
+}
+res.hospitals$h_p <- as.numeric(rep(n_vec, rep(size, length(n_vec))))
+res.hospitals$X2 <- factor(res.hospitals$X2, labels = tnam)
+for(i in 1:H) n_vec[i] <- as.numeric(hospitals[[i]]$e_pdeath)
+res.hospitals$rat <- as.numeric(rep(n_vec), rep(size, H))
+res.hospitals$rat <- expit(res.hospitals$value)/res.hospitals$rat
+
+tm <- (res[["gamma"]][-(1:burnin),])[keep,]
+res.doctors <- melt(tm)
+
+n_vec <- character(D)
+for(i in 1:D) n_vec[i] <- as.character(hospitals[[doctors[[i]]$up]]$name)
+res.doctors$hos <- rep(n_vec, rep(size, D))
+for(i in 1:D) n_vec[i] <- as.character(regions[[hospitals[[doctors[[i]]$up]]$up]]$name)
+res.doctors$reg <- rep(n_vec, rep(size, D))
+for(i in 1:D) n_vec[i] <- as.character(doctors[[i]]$name)
+res.doctors$nam <- rep(n_vec, rep(size, D))
+
+n_vec <- numeric(D)
+for(i in 1:D) n_vec[i] <- doctors[[i]]$e_pdeath
+res.doctors$rat <- as.numeric(rep(n_vec, rep(size, D)))
+res.doctors$rat <- expit(res.doctors$value) / res.doctors$rat
+for(i in 1:D) n_vec[i] <- doctors[[i]]$p_death
+res.doctors$p_death <- rep(n_vec, rep(size, D))
+
+
+loc_table <- docs[,c("Physician.Name", "Hospital.Name", "Detailed.Region")] %>% distinct()
+
+saveRDS(loc_table, "loc_table.rds")
+saveRDS(hospitals, file="hospitals.rds")
+saveRDS(doctors, file="doctors.rds")
+saveRDS(regions, file="regions.rds")
+saveRDS(res.regions, file = "res_regions.rds")
+saveRDS(res.doctors, file = "res_doctors.rds")
+saveRDS(res.hospitals, file = "res_hospitals.rds")
+
+###### TESTING ######
+res.hospitals <- res.hospitals %>% group_by(X2) %>% mutate(pmean = mean(expit(value)))
+newlabel <- res.hospitals %>% arrange(pmean) %$% as.character(unique(X2))
+res.hospitals$trylab <- factor(as.character(res.hospitals$X2), labels = newlabel)
+
+ggplot(res.hospitals, aes(x = factor(trylab), y = expit(value))) + geom_boxplot() + coord_flip() 
